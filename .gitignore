@@ -1,4 +1,6 @@
 # Python cache
 __pycache__/
 *.pyc
-
+*.mid
+*_notes.txt
+*_chords.txt
