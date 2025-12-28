@@ -19,6 +19,10 @@ from transcribe.app import TranscriptionApp
 from transcribe.filters import FilterConfig
 from transcribe.frame import FrameConfig
 
+# ✅ Sheet rendering
+from PIL import ImageTk
+from transcribe.sheet_render import render_grand_staff_from_notes_txt
+
 
 def filter_cfg_from_preset(preset: str) -> FilterConfig:
     preset = preset.lower().strip()
@@ -85,6 +89,9 @@ class App(tk.Tk):
 
         # ✅ UI lock to prevent double-click races
         self.ui_lock = False
+
+        # ✅ Keep reference to Tk image to prevent GC
+        self._sheet_imgtk = None
 
         self._build_style()
         self._build_layout()
@@ -236,8 +243,11 @@ class App(tk.Tk):
 
         notes_tab = ttk.Frame(self.tabs)
         chords_tab = ttk.Frame(self.tabs)
+        sheet_tab = ttk.Frame(self.tabs)
+
         self.tabs.add(notes_tab, text="Notes")
         self.tabs.add(chords_tab, text="Chords")
+        self.tabs.add(sheet_tab, text="Sheet")
 
         self.notes_box = ScrolledText(notes_tab, height=18, wrap="none")
         self.notes_box.pack(fill="both", expand=True, padx=8, pady=8)
@@ -246,6 +256,10 @@ class App(tk.Tk):
         self.chords_box = ScrolledText(chords_tab, height=14, wrap="none")
         self.chords_box.pack(fill="both", expand=True, padx=8, pady=8)
         self.chords_box.insert("end", "Chords output will appear here…\n")
+
+        # ✅ Sheet view
+        self.sheet_label = ttk.Label(sheet_tab)
+        self.sheet_label.pack(fill="both", expand=True, padx=8, pady=8)
 
         # Status bar
         status_bar = ttk.Frame(self, style="Header.TFrame", padding=(12, 8))
@@ -305,6 +319,16 @@ class App(tk.Tk):
 
         self.after(ms, unlock)
 
+    # ✅ Render sheet from notes text
+    def _update_sheet_from_notes_txt(self, notes_txt: str):
+        try:
+            img = render_grand_staff_from_notes_txt(notes_txt)
+            self._sheet_imgtk = ImageTk.PhotoImage(img)
+            self.sheet_label.configure(image=self._sheet_imgtk, text="")
+        except Exception as e:
+            self.sheet_label.configure(text=f"Sheet render error: {e}", image="")
+            self._sheet_imgtk = None
+
     def reset_all(self):
         if self.ui_lock:
             return
@@ -319,6 +343,9 @@ class App(tk.Tk):
         self.chords_box.delete("1.0", "end")
         self.notes_box.insert("end", "Notes output will appear here…\n")
         self.chords_box.insert("end", "Chords output will appear here…\n")
+
+        self.sheet_label.configure(image="", text="")
+        self._sheet_imgtk = None
 
         with self.buf_lock:
             self.recorded_chunks.clear()
@@ -422,6 +449,9 @@ class App(tk.Tk):
         self.chords_box.delete("1.0", "end")
         self.chords_box.insert("end", chords_content)
 
+        # ✅ Update sheet tab from notes txt
+        self._update_sheet_from_notes_txt(notes_content)
+
     # --------------------
     # Live mic mode (no window)
     # Start = record everything
@@ -498,10 +528,10 @@ class App(tk.Tk):
         def job():
             try:
                 if audio.size == 0 or len(audio) < int(0.2 * sample_rate):
-                    self.after(0, lambda: self._show_live(
-                        "Filtered notes\n\n(No audio captured — press Start and play a bit)\n",
-                        "Chord segments (frame-based)\n\n(No audio captured)\n"
-                    ))
+                    empty_notes = "Filtered notes\n\n(No audio captured — press Start and play a bit)\n"
+                    empty_chords = "Chord segments (frame-based)\n\n(No audio captured)\n"
+                    self.after(0, lambda: self._show_live(empty_notes, empty_chords))
+                    self.after(0, lambda: self._update_sheet_from_notes_txt(empty_notes))
                     self.after(0, lambda: self._set_status("Done ✅ (no audio)"))
                     return
 
@@ -530,6 +560,7 @@ class App(tk.Tk):
                 chords = chords_path.read_text(encoding="utf-8") if chords_path.exists() else "(no chords)"
 
                 self.after(0, lambda n=notes, c=chords: self._show_live(n, c))
+                self.after(0, lambda n=notes: self._update_sheet_from_notes_txt(n))
                 self.after(0, lambda: self._set_status("Done ✅"))
 
             except Exception as e:
