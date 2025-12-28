@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import threading
-import time
 import tkinter as tk
 from tkinter import filedialog, messagebox
 from tkinter.scrolledtext import ScrolledText
@@ -10,6 +9,7 @@ from tkinter import ttk
 from pathlib import Path
 import subprocess
 import sys
+from PIL import Image  # add near top (with other imports)
 
 import numpy as np
 import sounddevice as sd
@@ -20,9 +20,8 @@ from transcribe.filters import FilterConfig
 from transcribe.frame import FrameConfig
 
 # ✅ Sheet rendering
-from PIL import ImageTk
+from PIL import Image, ImageTk
 from transcribe.sheet_render import render_grand_staff_from_notes_txt
-
 
 def filter_cfg_from_preset(preset: str) -> FilterConfig:
     preset = preset.lower().strip()
@@ -319,10 +318,18 @@ class App(tk.Tk):
 
         self.after(ms, unlock)
 
-    # ✅ Render sheet from notes text
+    # ✅ Render sheet from notes text -> PNG -> show in tab
     def _update_sheet_from_notes_txt(self, notes_txt: str):
         try:
             img = render_grand_staff_from_notes_txt(notes_txt)
+
+            # Fit image into current sheet tab size
+            w = max(300, self.sheet_label.winfo_width())
+            h = max(200, self.sheet_label.winfo_height())
+
+            img = img.copy()
+            img.thumbnail((w - 20, h - 20))  # keep aspect ratio
+
             self._sheet_imgtk = ImageTk.PhotoImage(img)
             self.sheet_label.configure(image=self._sheet_imgtk, text="")
         except Exception as e:
