@@ -83,14 +83,20 @@ class App(tk.Tk):
         self.buffer_sec = 10.0
         self.buf = np.zeros(int(self.buffer_sec * sample_rate), dtype=np.float32)
 
-        # ✅ NEW: how much of the rolling buffer is actually real mic audio
+        # buffer fill count (warm-up)
         self.filled = 0
+
+        # ✅ UI lock to prevent double-click races
+        self.ui_lock = False
 
         self._build_style()
         self._build_layout()
         self._toggle_hop()
         self._toggle_mode_ui()
         self._set_status("Ready.")
+
+        print("[GUI] Started. sample_rate =", sample_rate)
+        print("[GUI] Default outdir =", self.outdir)
 
         self.protocol("WM_DELETE_WINDOW", self._on_close)
 
@@ -128,7 +134,7 @@ class App(tk.Tk):
         style.configure("TButton", background="#1f2937", foreground="#e5e7eb", padding=(10, 8))
         style.map("TButton", background=[("active", "#374151")])
 
-        style.configure("Status.TLabel", background="#0b1224", foreground="#cbd5e1")
+        style.configure("Status.TLabel", background="#0b1224", foreground="#cbd5e7eb")
 
     def _build_layout(self):
         header = ttk.Frame(self, style="Header.TFrame", padding=(16, 14))
@@ -210,7 +216,7 @@ class App(tk.Tk):
         self.hop_entry = ttk.Entry(r3, textvariable=self.hop_var, width=8)
         self.hop_entry.pack(side="right")
 
-        # Live controls (only visible in live mode)
+        # Live controls
         r_live = ttk.Frame(opts, style="Card.TFrame")
         r_live.pack(fill="x", pady=(0, 10))
         self.live_row = r_live
@@ -227,6 +233,10 @@ class App(tk.Tk):
 
         self.btn_live = ttk.Button(r_buttons, text="Start Live Mic", style="Primary.TButton", command=self.toggle_live)
         self.btn_live.pack(fill="x", pady=(8, 0))
+
+        # ✅ Reset button (as you already had)
+        self.btn_reset = ttk.Button(r_buttons, text="Reset", command=self.reset_all)
+        self.btn_reset.pack(fill="x", pady=(8, 0))
 
         # Output card
         out_card = make_card(main, title="Output")
@@ -267,10 +277,11 @@ class App(tk.Tk):
         mode = self.mode_var.get()
         is_file = (mode == "file")
 
+        print(f"[GUI] Mode changed -> {mode}")
+
         self.btn_pick_audio.configure(state=("normal" if is_file else "disabled"))
         self.btn_run.configure(state=("normal" if is_file else "disabled"))
 
-        # live-only controls
         self.window_entry.configure(state=("normal" if not is_file else "disabled"))
         self.btn_live.configure(state=("normal" if not is_file else "disabled"))
 
@@ -283,7 +294,56 @@ class App(tk.Tk):
         else:
             self.progress.stop()
 
+    # ✅ UI lock: extended a tiny bit to also cover file-run clicks
+    def _lock_ui_temporarily(self, ms: int = 250):
+        self.ui_lock = True
+        try:
+            self.btn_live.configure(state="disabled")
+            self.btn_reset.configure(state="disabled")
+            self.btn_run.configure(state="disabled")
+        except Exception:
+            pass
+
+        def unlock():
+            self.ui_lock = False
+            try:
+                is_live_mode = (self.mode_var.get() == "live")
+                is_file_mode = (self.mode_var.get() == "file")
+
+                self.btn_live.configure(state=("normal" if is_live_mode else "disabled"))
+                self.btn_run.configure(state=("normal" if is_file_mode else "disabled"))
+                self.btn_reset.configure(state="normal")
+            except Exception:
+                pass
+
+        self.after(ms, unlock)
+
+    # ✅ Reset action
+    def reset_all(self):
+        if self.ui_lock:
+            return
+        print("[GUI] Reset pressed")
+        self._lock_ui_temporarily(250)
+
+        if self.live_running:
+            print("[GUI] Reset: stopping live mode first…")
+            self.stop_live()
+
+        self.notes_box.delete("1.0", "end")
+        self.chords_box.delete("1.0", "end")
+        self.notes_box.insert("end", "Notes output will appear here…\n")
+        self.chords_box.insert("end", "Chords output will appear here…\n")
+
+        with self.buf_lock:
+            self.buf[:] = 0.0
+            self.filled = 0
+
+        self._set_busy(False)
+        self._set_status("Reset ✅ (ready for new run)")
+        print("[GUI] Reset done")
+
     def pick_audio(self):
+        print("[GUI] Choose Audio clicked")
         path = filedialog.askopenfilename(
             title="Select audio file",
             filetypes=[("Audio", "*.wav *.mp3 *.ogg *.flac *.m4a"), ("All files", "*.*")]
@@ -291,17 +351,24 @@ class App(tk.Tk):
         if path:
             self.audio_path = Path(path).expanduser().resolve()
             self.audio_label.config(text=str(self.audio_path))
+            print("[GUI] Selected audio:", self.audio_path)
 
     def pick_outdir(self):
+        print("[GUI] Choose Output Folder clicked")
         folder = filedialog.askdirectory(title="Select output folder")
         if folder:
             self.outdir = Path(folder).expanduser().resolve()
             self.outdir_label.config(text=str(self.outdir))
+            print("[GUI] Selected outdir:", self.outdir)
 
     # --------------------
     # File mode
     # --------------------
     def run_file(self):
+        if self.ui_lock:
+            return
+        self._lock_ui_temporarily(250)
+
         if not self.audio_path or not self.audio_path.exists():
             messagebox.showerror("Missing file", "Please choose an audio file first.")
             return
@@ -314,6 +381,12 @@ class App(tk.Tk):
         except Exception:
             messagebox.showerror("Invalid hop", "Hop must be a positive number (e.g. 0.05).")
             return
+
+        print("[GUI] Run (File) starting…")
+        print("      preset =", self.preset_var.get())
+        print("      write_chords =", write_chords, "hop =", hop)
+        print("      audio_path =", self.audio_path)
+        print("      outdir =", self.outdir)
 
         self._set_busy(True)
         self._set_status("Running file transcription…")
@@ -335,15 +408,20 @@ class App(tk.Tk):
                 self.after(0, lambda: self._load_outputs(stem, write_chords))
                 self.after(0, lambda: self._set_status("Done ✅"))
                 self.after(0, lambda: messagebox.showinfo("Done", "File transcription finished ✅"))
+                print("[GUI] Run (File) done ✅")
+
             except Exception as e:
+                print("[GUI] Run (File) error:", repr(e))
                 self.after(0, lambda: messagebox.showerror("Error", str(e)))
                 self.after(0, lambda: self._set_status("Error."))
+
             finally:
                 self.after(0, lambda: self._set_busy(False))
 
         threading.Thread(target=job, daemon=True).start()
 
     def _load_outputs(self, stem: str, write_chords: bool):
+        print("[GUI] Loading output files for stem =", stem)
         notes_txt = self.outdir / f"{stem}_notes.txt"
         chords_txt = self.outdir / f"{stem}_chords.txt"
 
@@ -368,13 +446,18 @@ class App(tk.Tk):
             n = len(x)
             self.buf = np.roll(self.buf, -n)
             self.buf[-n:] = x
-            # ✅ NEW: mark buffer as filled with real audio
             self.filled = min(len(self.buf), self.filled + n)
 
     def toggle_live(self):
+        if self.ui_lock:
+            return
+        self._lock_ui_temporarily(250)
+
         if self.live_running:
+            print("[GUI] Stop Live Mic clicked")
             self.stop_live()
         else:
+            print("[GUI] Start Live Mic clicked")
             self.start_live()
 
     def start_live(self):
@@ -389,17 +472,20 @@ class App(tk.Tk):
             messagebox.showerror("Bad live settings", str(e))
             return
 
-        # ensure output folder exists
         self.outdir.mkdir(parents=True, exist_ok=True)
 
-        # reset fill counter so warm-up works
         with self.buf_lock:
             self.filled = 0
             self.buf[:] = 0.0
 
+        print("[LIVE] Starting stream…")
+        print("       window_sec =", window_sec)
+        print("       update interval ~0.5s")
+        print("       outdir =", self.outdir)
+
         self.live_running = True
         self.btn_live.configure(text="Stop Live Mic")
-        self._set_status("Listening… (warming up buffer)")
+        self._set_status("Listening… (warming up mic buffer)")
         self._set_busy(True)
 
         self.live_stream = sd.InputStream(
@@ -414,21 +500,15 @@ class App(tk.Tk):
             while self.live_running:
                 t_start = time.time()
 
-                # --- get a stable window from buffer ---
                 with self.buf_lock:
                     n = int(window_sec * sample_rate)
-                    if self.filled < n:
-                        audio = None
-                    else:
-                        audio = self.buf[-n:].copy()
+                    audio = None if self.filled < n else self.buf[-n:].copy()
 
-                # warm-up: don’t run model on zeros
                 if audio is None:
                     self.after(0, lambda: self._set_status("Listening… (warming up mic buffer)"))
                     time.sleep(0.2)
                     continue
 
-                # silence gate
                 rms = float(np.sqrt(np.mean(audio * audio)))
                 if rms < 0.005:
                     self.after(0, lambda: self._set_status("Listening… (too quiet — play louder / closer to mic)"))
@@ -450,6 +530,7 @@ class App(tk.Tk):
                     )
 
                     stem = "live"
+                    print(f"[LIVE] Transcribing window… rms={rms:.3f}, samples={len(audio)}")
                     app.run_audio(audio, outdir=self.outdir, stem=stem)
 
                     notes_path = self.outdir / f"{stem}_notes.txt"
@@ -462,11 +543,11 @@ class App(tk.Tk):
                     self.after(0, lambda: self._set_status(f"Listening… (rms={rms:.3f})"))
 
                 except Exception as e:
+                    print("[LIVE] ERROR:", repr(e))
                     self.after(0, lambda: messagebox.showerror("Live error", str(e)))
                     self.after(0, self.stop_live)
                     return
 
-                # target ~0.5s update interval
                 elapsed = time.time() - t_start
                 time.sleep(max(0.0, 0.5 - elapsed))
 
@@ -481,6 +562,7 @@ class App(tk.Tk):
         self.chords_box.insert("end", chords)
 
     def stop_live(self):
+        print("[LIVE] Stopping stream…")
         self.live_running = False
         self.btn_live.configure(text="Start Live Mic")
         self._set_busy(False)
@@ -494,7 +576,10 @@ class App(tk.Tk):
                 pass
             self.live_stream = None
 
+        print("[LIVE] Stopped ✅")
+
     def _on_close(self):
+        print("[GUI] Closing…")
         try:
             self.stop_live()
         except Exception:

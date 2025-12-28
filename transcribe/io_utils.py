@@ -26,8 +26,10 @@ class IOWriter:
     @staticmethod
     def save_text(path: Path, text: str) -> None:
         path.write_text(text, encoding="utf-8")
+        print(f"[IO] saved text: {path}")
 
     @staticmethod
     def save_json(path: Path, payload: Any) -> None:
         with open(path, "w", encoding="utf-8") as f:
             json.dump(payload, f, indent=2, ensure_ascii=False, default=make_json_safe)
+        print(f"[IO] saved json: {path}")
