@@ -1,12 +1,25 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass
 from collections import defaultdict
 from typing import Dict, List, Optional
 
 
 @dataclass(frozen=True)
 class FilterConfig:
+    """
+    Configuration for post-processing filters.
+
+    enable_A:
+        Adaptive consistency filter across the whole audio (removes one-off ghost pitches).
+    enable_B:
+        Onset clustering filter (groups notes into chord-moments and keeps strongest notes).
+    enable_D:
+        Harmonic/overtone filter inside chord clusters (drops likely octave/harmonic hallucinations).
+
+    The remaining fields are internal parameters used by these filters.
+    In the simplified CLI, these are usually controlled indirectly via presets.
+    """
     enable_A: bool = False
     enable_B: bool = False
     enable_D: bool = False
@@ -19,9 +32,6 @@ class FilterConfig:
 
     min_occurrences: int = 2
     min_total_dur_ratio_of_max: float = 0.10
-
-    def to_dict(self) -> dict:
-        return asdict(self)
 
 
 class NoteFilters:
@@ -42,6 +52,13 @@ class NoteFilters:
 
     @staticmethod
     def clamp_events_to_audio(note_events: List[dict], audio_dur: float) -> List[dict]:
+        """
+        Clamp predicted note events so they never exceed the real audio duration.
+
+        - Drops notes with onset >= audio_dur
+        - Clamps offset_time to <= audio_dur
+        - Ensures offset_time >= onset_time
+        """
         clamped = []
         for ev in note_events:
             onset = float(ev["onset_time"])
@@ -49,6 +66,7 @@ class NoteFilters:
 
             if onset >= audio_dur:
                 continue
+
             offset = min(offset, audio_dur)
             offset = max(offset, onset)
 
@@ -61,6 +79,12 @@ class NoteFilters:
 
     @staticmethod
     def cluster_by_onset(note_events: List[dict], cluster_window: float) -> List[List[dict]]:
+        """
+        Group notes into clusters by onset time (chord moments).
+
+        Notes are in the same cluster if:
+            onset - cluster_start_onset <= cluster_window
+        """
         events = NoteFilters.sort_by_onset(note_events)
         clusters: List[List[dict]] = []
 
@@ -88,6 +112,11 @@ class NoteFilters:
 
     @staticmethod
     def dedupe_same_pitch_in_cluster(cluster: List[dict], dedupe_window: float) -> List[dict]:
+        """
+        If the same MIDI pitch appears multiple times in a cluster very close in time,
+        keep only the strongest one (velocity, then duration).
+        """
+
         def better(a: dict, b: dict) -> dict:
             sa = (NoteFilters.note_velocity(a), NoteFilters.note_duration(a))
             sb = (NoteFilters.note_velocity(b), NoteFilters.note_duration(b))
@@ -113,6 +142,16 @@ class NoteFilters:
 
     @staticmethod
     def dedupe_pitch_class_in_cluster(cluster: List[dict]) -> List[dict]:
+        """
+        Remove octave duplicates inside ONE chord cluster.
+
+        Example:
+          E4 and E6 appear at the same chord moment -> keep only one "E".
+
+        Strategy:
+          - Find median midi of the cluster
+          - For each pitch class (midi % 12), keep the note closest to that median
+        """
         if not cluster:
             return cluster
 
@@ -135,6 +174,10 @@ class NoteFilters:
 
     @staticmethod
     def keep_top_k_in_cluster(cluster: List[dict], max_notes: int) -> List[dict]:
+        """
+        Keep only the strongest K notes in a chord cluster.
+        Strength = (velocity, duration).
+        """
         ranked = sorted(
             cluster,
             key=lambda ev: (NoteFilters.note_velocity(ev), NoteFilters.note_duration(ev)),
@@ -144,6 +187,10 @@ class NoteFilters:
 
     @staticmethod
     def dedupe_same_midi_globally(note_events: List[dict], dedupe_window: float) -> List[dict]:
+        """
+        Remove near-duplicate repeats of the same MIDI note across the whole audio.
+        If the same MIDI appears again within dedupe_window seconds, keep only the stronger one.
+        """
         events = NoteFilters.sort_by_onset(note_events)
 
         def better(a: dict, b: dict) -> dict:
@@ -180,6 +227,12 @@ class NoteFilters:
         harmonic_intervals=(12, 19, 24, 31),
         min_base_velocity_ratio: float = 1.15,
     ) -> List[dict]:
+        """
+        Drop notes that look like harmonics/overtones inside one chord cluster.
+
+        If a higher note is ~harmonic interval above a base note,
+        and the base note is stronger by a ratio, we drop the harmonic.
+        """
         if not cluster:
             return cluster
 
@@ -217,6 +270,10 @@ class NoteFilters:
         min_total_dur_ratio_of_max: float = 0.10,
         keep_if_velocity_ge: Optional[int] = None,
     ) -> List[dict]:
+        """
+        Remove pitches that appear only once and have very small total duration.
+        Helps reduce "ghost notes" across the whole piece.
+        """
         if not note_events:
             return note_events
 
@@ -250,6 +307,12 @@ class NoteFilters:
 
     @classmethod
     def apply_ABD(cls, note_events: List[dict], cfg: FilterConfig) -> List[dict]:
+        """
+        Apply A/B/D filters in a stable order:
+        1) B: cluster + dedupe + keep top K (+ global dedupe)
+        2) D: harmonic removal inside clusters
+        3) A: global consistency cleanup
+        """
         events = cls.sort_by_onset(note_events)
 
         if cfg.enable_B:
