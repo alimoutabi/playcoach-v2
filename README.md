@@ -1,58 +1,64 @@
-# PlayCoach v2 – Piano Transcription & Chord Detection
+PlayCoach v2 – Piano Transcription (OOP)
+=======================================
 
-HOW TO RUN (MOST IMPORTANT)
+What this project does
+---------------------
+Desktop tool to transcribe piano audio into:
+- notes.txt  → detected notes with timing
+- chords.txt → optional frame-based chord segments
 
-python main.py \
-  --audio "/path/to/audio.ogg" \
-  --outdir "/path/to/output" \
-  --enable-A --enable-B --enable-D \
-  --write-chords \
-  --frame-hop 0.05 \
-  --frame-min-vel 20 \
-  --frame-min-active 2 \
-  --merge-min-jaccard 0.85 \
-  --merge-min-dur 0.10
+Built fully object-oriented (OOP).
+Usable via CLI or a simple Tkinter desktop GUI.
 
 
-ARGUMENTS (SHORT)
+Filters (A / B / D)
+------------------
+A – Adaptive consistency
+Removes short, one-off “ghost” notes across the whole audio.
 
---audio              Input audio file
---outdir             Output directory
---device             cpu or cuda
---no-midi            Do not save MIDI
---print-raw          Print raw notes
---print-audio-info   Show audio info
+B – Onset clustering
+Groups notes that start together (chords), removes duplicates,
+keeps only the strongest notes.
 
-FILTERS
-A: Consistency filter (removes one-off ghost notes)
-B: Onset clustering (groups notes played together)
-D: Harmonic filter (removes octave / overtone artifacts)
-
-FRAME-BASED CHORDS
-
-Audio is split into short frames (e.g. every 50ms).
-For each frame, active notes are collected.
-Similar consecutive frames are merged into chord segments.
-Very short or unstable segments are removed.
+D – Harmonic filter
+Drops likely harmonics / octave overtones if a stronger base note exists.
 
 
-PROJECT FILES
+Main entry files
+----------------
+transcribe_oop.py
+CLI entrypoint. Parses arguments, selects filter preset,
+runs the full transcription pipeline.
 
-main.py
-- CLI entry point
-- Parses arguments
-- Starts the app
+gui.py
+Tkinter desktop GUI (for testing).
+Select audio, preset, hop size, and view notes & chords.
 
-transcribe/app.py
-- Full transcription pipeline
-- Audio → notes → filters → chords → output
 
-transcribe/filters.py
-- Note-level filtering (A / B / D)
+Core OOP modules (transcribe/)
+------------------------------
+app.py
+Main orchestrator: loads audio, runs the model,
+applies filters, extracts chords, writes TXT outputs.
 
-transcribe/frame.py
-- Frame-based chord detection
-- Real-time ready logic
+filters.py
+Implements A/B/D note-cleanup logic and FilterConfig.
 
-transcribe/utils.py
-- Helper functions (MIDI names, JSON, formatting)
+frame.py
+Frame-based chord extraction (real-time-ready).
+Slices time into frames and merges them into chord segments.
+
+io_utils.py
+Handles writing TXT files (notes and chords).
+
+utils.py
+Small helpers (MIDI → note name, misc utilities).
+
+
+Typical usage
+-------------
+CLI:
+python transcribe_oop.py --audio path/to/file.ogg --preset clean --chords --hop 0.05
+
+GUI:
+python gui.py
