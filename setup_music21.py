@@ -11,12 +11,8 @@ def find_musescore_executable() -> Path | None:
     """
     candidates = [
         # Common MuseScore 4 bundle names
-        Path("/Applications/MuseScore 4.app/Contents/MacOS/mscore"),
-        Path("/Applications/MuseScore 4.app/Contents/MacOS/MuseScore4"),
-        Path("/Applications/MuseScore 4.app/Contents/MacOS/MuseScore"),
-        Path("/Applications/MuseScore.app/Contents/MacOS/mscore"),
-        Path("/Applications/MuseScore.app/Contents/MacOS/MuseScore4"),
-        Path("/Applications/MuseScore.app/Contents/MacOS/MuseScore"),
+
+        Path("C:/Program Files/MuseScore 4"),
     ]
 
     for p in candidates:

@@ -9,19 +9,41 @@ from tkinter import ttk
 from pathlib import Path
 import subprocess
 import sys
-from PIL import Image  # add near top (with other imports)
-
+from PIL import Image, ImageTk
 import numpy as np
 import sounddevice as sd
 from piano_transcription_inference import sample_rate
-
 from transcribe.app import TranscriptionApp
 from transcribe.filters import FilterConfig
 from transcribe.frame import FrameConfig
-
-# ✅ Sheet rendering
 from PIL import Image, ImageTk
 from transcribe.sheet_render import render_grand_staff_from_notes_txt
+import winsound
+import time
+import threading
+
+class MetronomeEngine:
+    def __init__(self):
+        self.running = False
+        self.bpm = 120
+
+    def start(self, bpm, tick_callback):
+        self.bpm = bpm
+        self.running = True
+        self.thread = threading.Thread(target=self._run, args=(tick_callback,), daemon=True)
+        self.thread.start()
+
+    def stop(self):
+        self.running = False
+
+    def _run(self, tick_callback):
+        while self.running:
+            winsound.Beep(1000, 50) 
+            tick_callback()
+            time.sleep(60.0 / self.bpm)
+
+
+
 
 def filter_cfg_from_preset(preset: str) -> FilterConfig:
     preset = preset.lower().strip()
@@ -62,6 +84,9 @@ def open_folder(path: Path) -> None:
         pass
 
 
+
+
+
 def make_card(parent: tk.Widget, *, title: str) -> ttk.Frame:
     outer = ttk.Frame(parent, padding=12, style="Card.TFrame")
     ttk.Label(outer, text=title, style="CardTitle.TLabel").pack(anchor="w", pady=(0, 8))
@@ -83,6 +108,8 @@ class App(tk.Tk):
         self.live_stream = None
         self.buf_lock = threading.Lock()
 
+
+
         # ✅ record-from-start buffer (no window)
         self.recorded_chunks: list[np.ndarray] = []
 
@@ -102,6 +129,34 @@ class App(tk.Tk):
         print("[GUI] Default outdir =", self.outdir)
 
         self.protocol("WM_DELETE_WINDOW", self._on_close)
+
+
+    def toggle_metronome(self):
+        if not self.metro_engine.running:
+            try:
+                bpm = int(self.bpm_var.get())
+                if bpm < 30 or bpm > 300: raise ValueError
+                self.metro_engine.start(bpm, self._metro_tick)
+                self.btn_metro.configure(text="Stop")
+            except ValueError:
+                messagebox.showwarning("BPM Error", "Bitte eine Zahl zwischen 30 und 300 eingeben.")
+        else:
+            self.metro_engine.stop()
+            self.btn_metro.configure(text="Start")
+            self.metro_canvas.itemconfig(self.metro_light, fill="#374151")
+
+    def _metro_tick(self):
+        # Visueller Effekt: Kurz aufleuchten (Blau)
+        self.after(0, lambda: self.metro_canvas.itemconfig(self.metro_light, fill="#2563eb"))
+        # Nach 150ms wieder abdunkeln
+        self.after(150, lambda: self.metro_canvas.itemconfig(self.metro_light, fill="#374151"))
+        
+        # Optional: Ein kurzer System-Sound
+        # self.bell() # Einfachster Weg für einen Klick-Ton
+
+
+    
+
 
     def _build_style(self):
         self.configure(bg="#0f172a")
@@ -218,6 +273,27 @@ class App(tk.Tk):
         self.hop_var = tk.StringVar(value="0.05")
         self.hop_entry = ttk.Entry(r3, textvariable=self.hop_var, width=8)
         self.hop_entry.pack(side="right")
+
+
+
+     ######### Metronome ##########
+        self.metro_engine = MetronomeEngine()
+        r_metro = ttk.Frame(opts, style="Card.TFrame")
+        r_metro.pack(fill="x", pady=(10, 0))
+        ttk.Label(r_metro, text="Metronom (BPM)", background="#111827").pack(side="left")
+        self.bpm_var = tk.StringVar(value="120")
+        self.bpm_entry = ttk.Entry(r_metro, textvariable=self.bpm_var, width=6)
+        self.bpm_entry.pack(side="left", padx=5)
+        self.metro_canvas = tk.Canvas(r_metro, width=20, height=20, bg="#111827", highlightthickness=0)
+        self.metro_canvas.pack(side="left", padx=10)
+        self.metro_light = self.metro_canvas.create_oval(4, 4, 16, 16, fill="#374151")
+        self.btn_metro = ttk.Button(r_metro, text="Start", width=8, command=self.toggle_metronome)
+        self.btn_metro.pack(side="right")
+
+
+
+
+
 
         # ✅ Window removed (no live controls row)
         self.live_row = None
