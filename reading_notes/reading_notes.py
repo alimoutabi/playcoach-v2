@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import json
 import subprocess
 import sys
 from pathlib import Path
@@ -174,6 +175,51 @@ def print_events(events_by_hand, hand_map):
 
 
 # -------------------------
+# 5) Save results (JSON for GUI)
+# -------------------------
+def _to_jsonable(events_by_hand):
+    """
+    Convert defaultdict structures to JSON-friendly dicts.
+    events_by_hand:
+      {"RH": defaultdict(list), "LH": defaultdict(list)}
+    -> {"RH": {"1": [{"offset":..., "midis":[...]}], ...}, "LH": {...}}
+    """
+    out = {}
+    for hand in ["RH", "LH"]:
+        out[hand] = {}
+        for meas_no, items in events_by_hand[hand].items():
+            out[hand][str(meas_no)] = [
+                {"offset": float(off), "midis": [int(m) for m in midis]}
+                for off, midis in items
+            ]
+    return out
+
+
+def save_expected_json(
+    out_path: Path,
+    *,
+    sheet_image: Path,
+    musicxml_path: Path,
+    hand_map: dict,
+    events_by_hand,
+    midi_min: int,
+    midi_max: int,
+):
+    payload = {
+        "sheet_image": str(sheet_image),
+        "musicxml": str(musicxml_path),
+        "hand_map": hand_map,
+        "midi_min": int(midi_min),
+        "midi_max": int(midi_max),
+        "events": _to_jsonable(events_by_hand),
+    }
+
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+    print(f"✅ Saved expected JSON: {out_path}")
+
+
+# -------------------------
 # Main
 # -------------------------
 def main():
@@ -183,6 +229,14 @@ def main():
     ap.add_argument("--workdir", default="outputs_oemer", help="Where oemer writes outputs")
     ap.add_argument("--midi-min", type=int, default=21, help="Lowest MIDI allowed (piano A0=21)")
     ap.add_argument("--midi-max", type=int, default=108, help="Highest MIDI allowed (piano C8=108)")
+
+    # ✅ NEW: save expected notes for GUI
+    ap.add_argument(
+        "--out-json",
+        default="outputs/expected.json",
+        help="Where to save expected notes as JSON (for GUI)",
+    )
+
     args = ap.parse_args()
 
     img = Path(args.image).expanduser().resolve()
@@ -199,6 +253,18 @@ def main():
     )
 
     print_events(events_by_hand, hand_map)
+
+    # ✅ NEW: write expected.json
+    out_json = Path(args.out_json).expanduser().resolve()
+    save_expected_json(
+        out_json,
+        sheet_image=img,
+        musicxml_path=mx,
+        hand_map=hand_map,
+        events_by_hand=events_by_hand,
+        midi_min=args.midi_min,
+        midi_max=args.midi_max,
+    )
 
 
 if __name__ == "__main__":
