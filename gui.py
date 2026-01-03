@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-#from future import annotations
+from future import annotations
 
 import json
 import re
@@ -101,6 +101,8 @@ def _extract_expected_blocks(obj) -> dict:
     Accepts multiple possible expected.json formats:
       A) {"events":{"RH":{meas:[{"offset":..., "midis":[...]}]}, "LH":{...}}}
       😎 {"RH":{meas:[(offset,[midis...]), ...]}, "LH":{...}}  (older)
+=======
+      B) {"RH":{meas:[(offset,[midis...]), ...]}, "LH":{...}}  (older)
       C) {"events":{"RH":{meas:[(offset,[midis...]), ...]}, ...}} (mixed)
     Returns dict with keys RH/LH (if present), each mapping measure->list of events.
     """
@@ -129,6 +131,7 @@ def load_expected_sequence_by_measure(expected_path: Path) -> dict[int, list[int
 
     # temp: per measure store list of (offset, [pcs...])
     tmp: dict[int, list[tuple[float, list[int]]]] = defaultdict(list)
+
     for _, meas_dict in blocks.items():
         if not isinstance(meas_dict, dict):
             continue
@@ -271,7 +274,10 @@ def match_sequence_with_lookahead(
     rows: list[tuple[int, str, int | None]] = []
     j = 0
 
+<<<<<<< HEAD
 
+=======
+>>>>>>> 737b4b7c88095d796ca11a98a156ec48d01dbc93
     for pc in expected:
         found = None
         # search forward within window
@@ -668,6 +674,7 @@ class App(tk.Tk):
             self.feedback_box.delete("1.0", "end")
             self.feedback_box.insert("end", f"No expected notes found for measures {m_from}..{m_to}\n")
             return
+<<<<<<< HEAD
         
         evs = parse_notes_txt(notes_txt)
         det_seq_by_meas = split_detected_into_measure_sequences(
@@ -741,6 +748,25 @@ class App(tk.Tk):
 
         self.feedback_box.delete("1.0", "end")
         self.feedback_box.insert("end", feedback_text)
+=======
+
+        evs = parse_notes_txt(notes_txt)
+        det_seq_by_meas = split_detected_into_measure_sequences(
+            evs,
+            meas_from=m_from,
+            meas_to=m_to,
+            min_velocity=20,
+            min_dur=0.05,
+        )
+
+        feedback = build_feedback_table(
+            exp_sel, det_seq_by_meas, m_from, m_to,
+            lookahead=8
+        )
+
+        self.feedback_box.delete("1.0", "end")
+        self.feedback_box.insert("end", feedback)
+>>>>>>> 737b4b7c88095d796ca11a98a156ec48d01dbc93
 
     def reset_all(self):
         if self.ui_lock:
